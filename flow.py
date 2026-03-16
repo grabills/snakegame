@@ -30,11 +30,13 @@ GRID_COLOR = (60, 60, 70)
 BORDER_COLOR = (80, 80, 95)  
 CURSOR_COLOR = (255, 255, 255)
 
-# Flat UI Button Colors
-BTN_DEFAULT = (45, 45, 55)
-BTN_HOVER = (85, 85, 105)
-BTN_SOLVED = (60, 180, 100) 
-BTN_SOLVED_HOVER = (80, 200, 120)
+BTN_DEFAULT = pygame.Color(45, 45, 55)
+BTN_HOVER = pygame.Color(85, 85, 105)
+BTN_SOLVED = pygame.Color(60, 180, 100) 
+BTN_SOLVED_HOVER = pygame.Color(80, 200, 120)
+
+# Global dict to track smooth color fading for UI buttons
+btn_hover_states = {}
 
 def get_color(col_id):
     return DISTINCT_COLORS[(col_id - 1) % len(DISTINCT_COLORS)]
@@ -48,15 +50,25 @@ else:
     print("\n ERROR: puzzles.json not found! Run puzzle_factory.py first.\n")
     sys.exit()
 
-def draw_button(screen, text, font, x, y, w, h, default_col, hover_col, mouse_pos):
-    """Modern, borderless rounded buttons."""
+def draw_button(screen, btn_id, text, font, x, y, w, h, default_col, hover_col, mouse_pos, dt):
+    """Modern, borderless rounded buttons with fluid color lerping."""
     rect = pygame.Rect(x, y, w, h)
     is_hover = rect.collidepoint(mouse_pos)
-    color = hover_col if is_hover else default_col
+    
+    # Initialize smooth hover tracking if not exists
+    if btn_id not in btn_hover_states:
+        btn_hover_states[btn_id] = 0.0
+        
+    # Lerp the hover state (0.0 to 1.0)
+    target_state = 1.0 if is_hover else 0.0
+    btn_hover_states[btn_id] += (target_state - btn_hover_states[btn_id]) * min(1.0, 15 * dt)
+    
+    # Interpolate current color
+    current_color = default_col.lerp(hover_col, btn_hover_states[btn_id])
     
     shadow_rect = pygame.Rect(x, y + 4, w, h)
     pygame.draw.rect(screen, (10, 10, 12), shadow_rect, border_radius=12)
-    pygame.draw.rect(screen, color, rect, border_radius=12)
+    pygame.draw.rect(screen, current_color, rect, border_radius=12)
     
     text_surf = font.render(text, True, (240, 240, 240))
     text_x = x + (w - text_surf.get_width()) // 2
@@ -101,13 +113,23 @@ def main():
     active_color = None
     level_solved = False
     
-    # --- ANIMATION VARIABLES ---
+    # --- FLUID ANIMATION VARIABLES ---
     visual_cursor = None
-    completed_pulses = {} # Tracks the pulse timer for finalized pipes
+    completed_pulses = {} # Tracks time-based ripple effects
+    history_stack = []    # Robust Undo system
     
+    def save_state():
+        """Saves a fast snapshot of the board for the Undo feature."""
+        history_stack.append({k: v[:] for k, v in paths.items()})
+        
+    def undo_state():
+        nonlocal paths
+        if history_stack:
+            paths = history_stack.pop()
+
     def load_level(idx):
         if idx >= len(LEVELS): return False 
-        nonlocal grid_size, level_grid, cell_size, off_x, off_y, paths, cursor, board_size_px, active_color, level_solved, visual_cursor, completed_pulses
+        nonlocal grid_size, level_grid, cell_size, off_x, off_y, paths, cursor, board_size_px, active_color, level_solved, visual_cursor, completed_pulses, history_stack
         
         raw_grid = LEVELS[idx]
         grid_size = len(raw_grid)
@@ -127,6 +149,7 @@ def main():
         active_color = None
         level_solved = False
         completed_pulses = {}
+        history_stack = []
         return True
 
     def check_win():
@@ -148,6 +171,8 @@ def main():
 
     running = True
     while running:
+        # Delta-Time (dt) enables perfectly smooth physics regardless of monitor refresh rate
+        dt = clock.tick(60) / 1000.0 
         current_time = pygame.time.get_ticks()
         mouse_pos = pygame.mouse.get_pos()
         action_dr, action_dc = 0, 0
@@ -176,6 +201,10 @@ def main():
                             if not load_level(current_level_idx): game_state = "LEVEL_SELECT" 
                         continue
 
+                    # UNDO MECHANIC
+                    if event.key == pygame.K_z:
+                        undo_state()
+
                     dr, dc = 0, 0
                     if event.key in (pygame.K_w, pygame.K_UP): dr, dc = -1, 0
                     elif event.key in (pygame.K_s, pygame.K_DOWN): dr, dc = 1, 0
@@ -189,19 +218,22 @@ def main():
                         if active_color is not None:
                             path = paths[active_color]
                             if len(path) > 1 and level_grid[r][c] == active_color and path[-1] == (r, c):
-                                # --- TRIGGER PULSE ANIMATION ---
-                                completed_pulses[active_color] = 20 # 20 frames of pulsing
+                                # Trigger visual ripple completion
+                                completed_pulses[active_color] = current_time 
                                 active_color = None 
                             else:
+                                save_state()
                                 paths[active_color] = []
                                 active_color = None
                         else:
                             if level_grid[r][c] != 0:
+                                save_state()
                                 active_color = level_grid[r][c]
                                 paths[active_color] = [(r, c)]
                             else:
                                 for col_id, path in paths.items():
                                     if (r, c) in path:
+                                        save_state()
                                         active_color = col_id
                                         idx = path.index((r, c))
                                         paths[col_id] = path[:idx+1]
@@ -210,7 +242,7 @@ def main():
                     if dr != 0 or dc != 0:
                         action_dr, action_dc = dr, dc
                         move_dr, move_dc = dr, dc
-                        current_delay = 180 
+                        current_delay = 160 
                         move_timer = current_time
                         halt_auto_move = False
 
@@ -221,7 +253,7 @@ def main():
                     elif event.key in (pygame.K_a, pygame.K_LEFT) and move_dc == -1: move_dr, move_dc = 0, 0
                     elif event.key in (pygame.K_d, pygame.K_RIGHT) and move_dc == 1: move_dr, move_dc = 0, 0
 
-        # --- PLAYING LOGIC & LERPING ---
+        # --- PLAYING LOGIC ---
         if game_state == "PLAYING":
             if action_dr == 0 and action_dc == 0:
                 if (move_dr != 0 or move_dc != 0) and not halt_auto_move:
@@ -260,6 +292,7 @@ def main():
                                     move_allowed = False
                         
                         if move_allowed:
+                            save_state()
                             cursor = [nr, nc]
                             if active_color is not None:
                                 path = paths[active_color]
@@ -277,20 +310,19 @@ def main():
                         else:
                             if is_auto_move: halt_auto_move = True
             
-            # Update visual cursor for smooth sliding
-            target_px = off_x + cursor[1] * cell_size + cell_size // 2
-            target_py = off_y + cursor[0] * cell_size + cell_size // 2
-            
+            # --- FLUID VECTOR CURSOR LERPING ---
+            target_pos = pygame.math.Vector2(off_x + cursor[1] * cell_size + cell_size // 2, 
+                                             off_y + cursor[0] * cell_size + cell_size // 2)
             if visual_cursor is None:
-                visual_cursor = [target_px, target_py]
+                visual_cursor = pygame.math.Vector2(target_pos)
             else:
-                # If distance is too large (e.g. wrapped around screen), snap instantly instead of sliding across board
-                if abs(target_px - visual_cursor[0]) > cell_size * 1.5 or abs(target_py - visual_cursor[1]) > cell_size * 1.5:
-                    visual_cursor = [target_px, target_py]
+                # Snap if teleporting (e.g. wrapped around screen)
+                if visual_cursor.distance_to(target_pos) > cell_size * 1.5:
+                    visual_cursor = pygame.math.Vector2(target_pos)
                 else:
-                    # LERP: Move 35% of the distance to the target every frame
-                    visual_cursor[0] += (target_px - visual_cursor[0]) * 0.35
-                    visual_cursor[1] += (target_py - visual_cursor[1]) * 0.35
+                    # Exponential smoothing factor based on pure delta-time (buttery smooth tracking)
+                    lerp_speed = min(1.0, 30.0 * dt)
+                    visual_cursor = visual_cursor.lerp(target_pos, lerp_speed)
 
             if not level_solved and check_win():
                 level_solved = True
@@ -307,15 +339,15 @@ def main():
             btn_w, btn_h = int(SCREEN_WIDTH * 0.25), int(SCREEN_HEIGHT * 0.08)
             btn_x = SCREEN_WIDTH//2 - btn_w//2
             
-            if draw_button(screen, "Play / Resume", font, btn_x, SCREEN_HEIGHT * 0.45, btn_w, btn_h, BTN_DEFAULT, BTN_HOVER, mouse_pos):
+            if draw_button(screen, "play_btn", "Play / Resume", font, btn_x, SCREEN_HEIGHT * 0.45, btn_w, btn_h, BTN_DEFAULT, BTN_HOVER, mouse_pos, dt):
                 if click:
                     load_level(current_level_idx)
                     game_state = "PLAYING"
                     
-            if draw_button(screen, "Level Select", font, btn_x, SCREEN_HEIGHT * 0.58, btn_w, btn_h, BTN_DEFAULT, BTN_HOVER, mouse_pos):
+            if draw_button(screen, "select_btn", "Level Select", font, btn_x, SCREEN_HEIGHT * 0.58, btn_w, btn_h, BTN_DEFAULT, BTN_HOVER, mouse_pos, dt):
                 if click: game_state = "LEVEL_SELECT"
                     
-            if draw_button(screen, "Quit Game", font, btn_x, SCREEN_HEIGHT * 0.71, btn_w, btn_h, BTN_DEFAULT, BTN_HOVER, mouse_pos):
+            if draw_button(screen, "quit_btn", "Quit Game", font, btn_x, SCREEN_HEIGHT * 0.71, btn_w, btn_h, BTN_DEFAULT, BTN_HOVER, mouse_pos, dt):
                 if click: running = False
 
         elif game_state == "LEVEL_SELECT":
@@ -347,7 +379,7 @@ def main():
                 d_col = BTN_SOLVED if is_solved else BTN_DEFAULT
                 h_col = BTN_SOLVED_HOVER if is_solved else BTN_HOVER
                 
-                if draw_button(screen, str(i + 1), font, x, y, btn_size, btn_size, d_col, h_col, mouse_pos):
+                if draw_button(screen, f"lvl_{i}", str(i + 1), font, x, y, btn_size, btn_size, d_col, h_col, mouse_pos, dt):
                     if click:
                         current_level_idx = i
                         load_level(current_level_idx)
@@ -375,66 +407,69 @@ def main():
             for y in range(cell_size, board_size_px, cell_size):
                 pygame.draw.line(screen, GRID_COLOR, (off_x, off_y + y), (off_x + board_size_px, off_y + y), 2)
 
-            base_pipe_thickness = int(cell_size * 0.4)
-            base_joint_radius = int(cell_size * 0.2)
+            pipe_thickness = int(cell_size * 0.4)
+            joint_radius = int(cell_size * 0.2)
             
-            # --- DRAW ANIMATED PIPES ---
             for col_id, path in paths.items():
                 if not path: continue
                 color = get_color(col_id)
                 
-                # Apply pulse animation thickness
-                pulse_val = 0
+                # Check for active Ripple Pulse
+                swell_radius = 0
                 if col_id in completed_pulses:
-                    # Uses a Sine wave to create a smooth swell up and down
-                    pulse_val = math.sin(completed_pulses[col_id] / 20.0 * math.pi) * (cell_size * 0.25)
-                    completed_pulses[col_id] -= 1
-                    if completed_pulses[col_id] <= 0:
-                        del completed_pulses[col_id]
+                    elapsed = current_time - completed_pulses[col_id]
+                    duration = 400.0 # 400 milliseconds ripple
+                    if elapsed < duration:
+                        progress = elapsed / duration
+                        ease_out = 1.0 - (1.0 - progress) * (1.0 - progress)
                         
-                current_thickness = int(base_pipe_thickness + pulse_val)
-                current_radius = int(base_joint_radius + (pulse_val / 2))
+                        # Calculate smooth swell thickness
+                        swell_radius = int(math.sin(progress * math.pi) * (cell_size * 0.15))
+                        
+                        # Draw outer expanding ring
+                        ring_rad = int(cell_size * 0.4 + (ease_out * cell_size * 0.6))
+                        ring_thick = max(1, int(cell_size * 0.1 * (1.0 - progress)))
+                        end_node = path[-1]
+                        ring_p = (off_x + end_node[1] * cell_size + cell_size // 2, off_y + end_node[0] * cell_size + cell_size // 2)
+                        pygame.draw.circle(screen, color, ring_p, ring_rad, ring_thick)
+                    else:
+                        del completed_pulses[col_id]
+
+                c_thick = pipe_thickness + swell_radius
+                c_rad = joint_radius + swell_radius // 2
                 
+                # Draw Pipe Segments
                 for i in range(len(path) - 1):
                     r1, c1 = path[i]
                     r2, c2 = path[i+1]
                     p1 = (off_x + c1 * cell_size + cell_size // 2, off_y + r1 * cell_size + cell_size // 2)
                     p2 = (off_x + c2 * cell_size + cell_size // 2, off_y + r2 * cell_size + cell_size // 2)
                     
-                    # Intercept the drawing to use the sliding visual_cursor for the active pipe's head
-                    if col_id == active_color and i == len(path) - 2:
-                        p2 = visual_cursor
-                    
                     if abs(r1 - r2) > 1 or abs(c1 - c2) > 1:
                         if wrap_mode:
                             if abs(r1 - r2) > 1: 
                                 if r1 < r2:
-                                    pygame.draw.line(screen, color, p1, (p1[0], p1[1] - cell_size), current_thickness)
-                                    pygame.draw.line(screen, color, p2, (p2[0], p2[1] + cell_size), current_thickness)
+                                    pygame.draw.line(screen, color, p1, (p1[0], p1[1] - cell_size), c_thick)
+                                    pygame.draw.line(screen, color, p2, (p2[0], p2[1] + cell_size), c_thick)
                                 else:
-                                    pygame.draw.line(screen, color, p1, (p1[0], p1[1] + cell_size), current_thickness)
-                                    pygame.draw.line(screen, color, p2, (p2[0], p2[1] - cell_size), current_thickness)
+                                    pygame.draw.line(screen, color, p1, (p1[0], p1[1] + cell_size), c_thick)
+                                    pygame.draw.line(screen, color, p2, (p2[0], p2[1] - cell_size), c_thick)
                             elif abs(c1 - c2) > 1: 
                                 if c1 < c2:
-                                    pygame.draw.line(screen, color, p1, (p1[0] - cell_size, p1[1]), current_thickness)
-                                    pygame.draw.line(screen, color, p2, (p2[0] + cell_size, p2[1]), current_thickness)
+                                    pygame.draw.line(screen, color, p1, (p1[0] - cell_size, p1[1]), c_thick)
+                                    pygame.draw.line(screen, color, p2, (p2[0] + cell_size, p2[1]), c_thick)
                                 else:
-                                    pygame.draw.line(screen, color, p1, (p1[0] + cell_size, p1[1]), current_thickness)
-                                    pygame.draw.line(screen, color, p2, (p2[0] - cell_size, p2[1]), current_thickness)
+                                    pygame.draw.line(screen, color, p1, (p1[0] + cell_size, p1[1]), c_thick)
+                                    pygame.draw.line(screen, color, p2, (p2[0] - cell_size, p2[1]), c_thick)
                         continue 
                     else:
-                        pygame.draw.line(screen, color, p1, p2, current_thickness)
+                        pygame.draw.line(screen, color, p1, p2, c_thick)
                     
-                for i, (r, c) in enumerate(path):
+                # Draw Pipe Joints
+                for r, c in path:
                     p = (off_x + c * cell_size + cell_size // 2, off_y + r * cell_size + cell_size // 2)
-                    
-                    # Ensure the visual joint attached to the active head also follows the slide
-                    if col_id == active_color and i == len(path) - 1:
-                        p = visual_cursor
-                        
-                    pygame.draw.circle(screen, color, p, current_radius)
+                    pygame.draw.circle(screen, color, p, c_rad)
 
-            # Draw Real Dots
             for r in range(grid_size):
                 for c in range(grid_size):
                     if level_grid[r][c] != 0:
@@ -442,18 +477,17 @@ def main():
                         center = (off_x + c * cell_size + cell_size // 2, off_y + r * cell_size + cell_size // 2)
                         pygame.draw.circle(screen, color, center, int(cell_size * 0.35))
 
-            # --- ANIMATED CURSOR ---
+            # --- SMOOTH LERPING CURSOR DRAW ---
             draw_color = get_color(active_color) if active_color else CURSOR_COLOR
             thickness = max(4, cell_size // 8) if active_color else 3
             
-            # Draw cursor at the interpolated visual coordinates
             cursor_rect = pygame.Rect(0, 0, cell_size, cell_size)
             if visual_cursor:
                 cursor_rect.center = visual_cursor
-            pygame.draw.rect(screen, draw_color, cursor_rect, thickness, border_radius=6)
+            pygame.draw.rect(screen, draw_color, cursor_rect, thickness, border_radius=8)
 
             hud_left = hud_font.render(f"Level {current_level_idx + 1} / {len(LEVELS)}", True, (220, 220, 220))
-            hud_right = hud_font.render(f"[ESC] Menu    [R] Restart    [T] 3D Torus", True, (150, 150, 150))
+            hud_right = hud_font.render(f"[ESC] Menu    [R] Restart    [Z] Undo    [T] 3D Torus", True, (150, 150, 150))
             
             screen.blit(hud_left, (30, (UI_HEIGHT - hud_left.get_height()) // 2))
             screen.blit(hud_right, (SCREEN_WIDTH - hud_right.get_width() - 30, (UI_HEIGHT - hud_right.get_height()) // 2))
@@ -470,7 +504,6 @@ def main():
                 screen.blit(sub_text, (SCREEN_WIDTH//2 - sub_text.get_width()//2, SCREEN_HEIGHT//2 + 20))
 
         pygame.display.flip()
-        clock.tick(60)
 
     pygame.quit()
     sys.exit()
