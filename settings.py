@@ -18,6 +18,11 @@ DISTINCT_COLORS = [
     (200, 200, 200)  # 15: Gray
 ]
 
+# --- SYSTEM TILES ---
+HOLE = -1
+BRIDGE = -2
+
+# --- UI Palette ---
 SCREEN_BG = (18, 18, 22)        
 BOARD_BG = (32, 32, 38)         
 GRID_COLOR = (60, 60, 70)    
