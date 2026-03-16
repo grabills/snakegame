@@ -73,6 +73,16 @@ def draw_button(screen, btn_id, text, font, x, y, w, h, default_col, hover_col, 
     
     return is_hover
 
+def draw_star(surface, x, y, size, color):
+    """Mathematically draws a perfect 5-point vector star."""
+    points = []
+    for i in range(10):
+        # Alternate between outer radius and inner radius to create the star points
+        angle = i * math.pi / 5 - math.pi / 2
+        radius = size if i % 2 == 0 else size * 0.4
+        points.append((x + math.cos(angle) * radius, y + math.sin(angle) * radius))
+    pygame.draw.polygon(surface, color, points)
+
 def main():
     pygame.init()
     
@@ -621,12 +631,31 @@ def main():
                 if moves > perfect_moves + 2: stars = 2
                 if moves > perfect_moves + 6: stars = 1
                 
-                star_text = large_font.render(f"Rating: {'★' * stars}{'☆' * (3 - stars)}", True, (255, 215, 0))
+                rating_text = large_font.render("Rating: ", True, (255, 215, 0))
                 sub_text = font.render("Press ENTER to continue", True, (200, 200, 200))
                 
-                screen.blit(win_text, (SCREEN_WIDTH//2 - win_text.get_width()//2, SCREEN_HEIGHT//2 - win_text.get_height()))
-                screen.blit(star_text, (SCREEN_WIDTH//2 - star_text.get_width()//2, SCREEN_HEIGHT//2))
-                screen.blit(sub_text, (SCREEN_WIDTH//2 - sub_text.get_width()//2, SCREEN_HEIGHT//2 + star_text.get_height() + 20))
+                # Calculate layout to center everything perfectly
+                star_size = int(SCREEN_HEIGHT * 0.025)
+                star_spacing = star_size * 2.5
+                total_w = rating_text.get_width() + (3 * star_spacing)
+                
+                start_x = SCREEN_WIDTH // 2 - total_w // 2
+                base_y = SCREEN_HEIGHT // 2
+                
+                # Draw Text
+                screen.blit(win_text, (SCREEN_WIDTH//2 - win_text.get_width()//2, base_y - win_text.get_height()))
+                screen.blit(rating_text, (start_x, base_y))
+                
+                # Draw Vector Stars
+                star_start_x = start_x + rating_text.get_width() + star_size
+                star_y = base_y + rating_text.get_height() // 2
+                
+                for i in range(3):
+                    color = (255, 215, 0) if i < stars else BORDER_COLOR # Gold or dark gray
+                    draw_star(screen, star_start_x + (i * star_spacing), star_y, star_size, color)
+
+                screen.blit(sub_text, (SCREEN_WIDTH//2 - sub_text.get_width()//2, base_y + rating_text.get_height() + 20))
+
 
         pygame.display.flip()
 
