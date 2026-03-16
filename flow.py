@@ -131,10 +131,13 @@ def main():
         if idx >= len(LEVELS): return False 
         nonlocal grid_size, level_grid, cell_size, off_x, off_y, paths, cursor, board_size_px, active_color, level_solved, visual_cursor, completed_pulses, history_stack
         
-        raw_grid = LEVELS[idx]
+        # --- Extract from dictionary ---
+        level_data = LEVELS[idx]
+        raw_grid = level_data["grid"]
+        # -------------------------------
+
         grid_size = len(raw_grid)
-        level_grid = [row[:] for row in raw_grid] 
-        
+        level_grid = [row[:] for row in raw_grid]
         margin_padding = int(SCREEN_HEIGHT * 0.20)
         max_board_size = min(SCREEN_WIDTH, SCREEN_HEIGHT - UI_HEIGHT) - margin_padding
         
@@ -486,7 +489,9 @@ def main():
                 cursor_rect.center = visual_cursor
             pygame.draw.rect(screen, draw_color, cursor_rect, thickness, border_radius=8)
 
-            hud_left = hud_font.render(f"Level {current_level_idx + 1} / {len(LEVELS)}", True, (220, 220, 220))
+            # Display difficulty text
+            diff = LEVELS[current_level_idx].get("difficulty", "Unknown")
+            hud_left = hud_font.render(f"Level {current_level_idx + 1} / {len(LEVELS)} | {diff}", True, (220, 220, 220))
             hud_right = hud_font.render(f"[ESC] Menu    [R] Restart    [Z] Undo    [T] 3D Torus", True, (150, 150, 150))
             
             screen.blit(hud_left, (30, (UI_HEIGHT - hud_left.get_height()) // 2))
