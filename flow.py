@@ -2,6 +2,7 @@ import pygame
 import sys
 import json
 import os
+import math
 
 # --- Hardcoded, visually distinct colors ---
 DISTINCT_COLORS = [
@@ -53,14 +54,10 @@ def draw_button(screen, text, font, x, y, w, h, default_col, hover_col, mouse_po
     is_hover = rect.collidepoint(mouse_pos)
     color = hover_col if is_hover else default_col
     
-    # Shadow
     shadow_rect = pygame.Rect(x, y + 4, w, h)
     pygame.draw.rect(screen, (10, 10, 12), shadow_rect, border_radius=12)
-    
-    # Main Button
     pygame.draw.rect(screen, color, rect, border_radius=12)
     
-    # Text
     text_surf = font.render(text, True, (240, 240, 240))
     text_x = x + (w - text_surf.get_width()) // 2
     text_y = y + (h - text_surf.get_height()) // 2
@@ -104,9 +101,13 @@ def main():
     active_color = None
     level_solved = False
     
+    # --- ANIMATION VARIABLES ---
+    visual_cursor = None
+    completed_pulses = {} # Tracks the pulse timer for finalized pipes
+    
     def load_level(idx):
         if idx >= len(LEVELS): return False 
-        nonlocal grid_size, level_grid, cell_size, off_x, off_y, paths, cursor, board_size_px, active_color, level_solved
+        nonlocal grid_size, level_grid, cell_size, off_x, off_y, paths, cursor, board_size_px, active_color, level_solved, visual_cursor, completed_pulses
         
         raw_grid = LEVELS[idx]
         grid_size = len(raw_grid)
@@ -122,8 +123,10 @@ def main():
         
         paths = {col: [] for row in level_grid for col in row if col != 0}
         cursor = [0, 0]
+        visual_cursor = None
         active_color = None
         level_solved = False
+        completed_pulses = {}
         return True
 
     def check_win():
@@ -186,6 +189,8 @@ def main():
                         if active_color is not None:
                             path = paths[active_color]
                             if len(path) > 1 and level_grid[r][c] == active_color and path[-1] == (r, c):
+                                # --- TRIGGER PULSE ANIMATION ---
+                                completed_pulses[active_color] = 20 # 20 frames of pulsing
                                 active_color = None 
                             else:
                                 paths[active_color] = []
@@ -216,7 +221,7 @@ def main():
                     elif event.key in (pygame.K_a, pygame.K_LEFT) and move_dc == -1: move_dr, move_dc = 0, 0
                     elif event.key in (pygame.K_d, pygame.K_RIGHT) and move_dc == 1: move_dr, move_dc = 0, 0
 
-        # --- PLAYING LOGIC ---
+        # --- PLAYING LOGIC & LERPING ---
         if game_state == "PLAYING":
             if action_dr == 0 and action_dc == 0:
                 if (move_dr != 0 or move_dc != 0) and not halt_auto_move:
@@ -240,35 +245,28 @@ def main():
                         dist = min(abs(r - nr), grid_size - abs(r - nr)) + min(abs(c - nc), grid_size - abs(c - nc))
                         
                     if dist == 1:
-                        # --- SOLID WALL COLLISION LOGIC ---
                         move_allowed = True
                         
                         if active_color is not None:
                             target_dot = level_grid[nr][nc]
                             path = paths[active_color]
-                            
-                            # Backtracking over your own pipe is always allowed
                             if (nr, nc) in path:
                                 pass 
                             else:
                                 head = path[-1]
-                                # Don't allow moving past your own finish line
                                 if level_grid[head[0]][head[1]] == active_color and len(path) > 1:
                                     move_allowed = False
-                                # Don't allow moving onto a dot that belongs to another color
                                 elif target_dot != 0 and target_dot != active_color:
                                     move_allowed = False
                         
                         if move_allowed:
                             cursor = [nr, nc]
-                            
                             if active_color is not None:
                                 path = paths[active_color]
                                 if (nr, nc) in path:
                                     idx = path.index((nr, nc))
                                     paths[active_color] = path[:idx+1]
                                 else:
-                                    # Break crossed lines normally
                                     for col_id, p in paths.items():
                                         if col_id != active_color and (nr, nc) in p:
                                             paths[col_id] = [] 
@@ -277,10 +275,23 @@ def main():
                             if is_auto_move and level_grid[nr][nc] != 0:
                                 halt_auto_move = True
                         else:
-                            # If the move was blocked, slam the brakes on auto-moving
-                            if is_auto_move:
-                                halt_auto_move = True
+                            if is_auto_move: halt_auto_move = True
             
+            # Update visual cursor for smooth sliding
+            target_px = off_x + cursor[1] * cell_size + cell_size // 2
+            target_py = off_y + cursor[0] * cell_size + cell_size // 2
+            
+            if visual_cursor is None:
+                visual_cursor = [target_px, target_py]
+            else:
+                # If distance is too large (e.g. wrapped around screen), snap instantly instead of sliding across board
+                if abs(target_px - visual_cursor[0]) > cell_size * 1.5 or abs(target_py - visual_cursor[1]) > cell_size * 1.5:
+                    visual_cursor = [target_px, target_py]
+                else:
+                    # LERP: Move 35% of the distance to the target every frame
+                    visual_cursor[0] += (target_px - visual_cursor[0]) * 0.35
+                    visual_cursor[1] += (target_py - visual_cursor[1]) * 0.35
+
             if not level_solved and check_win():
                 level_solved = True
                 solved_levels.add(current_level_idx)
@@ -364,12 +375,25 @@ def main():
             for y in range(cell_size, board_size_px, cell_size):
                 pygame.draw.line(screen, GRID_COLOR, (off_x, off_y + y), (off_x + board_size_px, off_y + y), 2)
 
-            pipe_thickness = int(cell_size * 0.4)
-            joint_radius = int(cell_size * 0.2)
+            base_pipe_thickness = int(cell_size * 0.4)
+            base_joint_radius = int(cell_size * 0.2)
             
+            # --- DRAW ANIMATED PIPES ---
             for col_id, path in paths.items():
                 if not path: continue
                 color = get_color(col_id)
+                
+                # Apply pulse animation thickness
+                pulse_val = 0
+                if col_id in completed_pulses:
+                    # Uses a Sine wave to create a smooth swell up and down
+                    pulse_val = math.sin(completed_pulses[col_id] / 20.0 * math.pi) * (cell_size * 0.25)
+                    completed_pulses[col_id] -= 1
+                    if completed_pulses[col_id] <= 0:
+                        del completed_pulses[col_id]
+                        
+                current_thickness = int(base_pipe_thickness + pulse_val)
+                current_radius = int(base_joint_radius + (pulse_val / 2))
                 
                 for i in range(len(path) - 1):
                     r1, c1 = path[i]
@@ -377,30 +401,40 @@ def main():
                     p1 = (off_x + c1 * cell_size + cell_size // 2, off_y + r1 * cell_size + cell_size // 2)
                     p2 = (off_x + c2 * cell_size + cell_size // 2, off_y + r2 * cell_size + cell_size // 2)
                     
+                    # Intercept the drawing to use the sliding visual_cursor for the active pipe's head
+                    if col_id == active_color and i == len(path) - 2:
+                        p2 = visual_cursor
+                    
                     if abs(r1 - r2) > 1 or abs(c1 - c2) > 1:
                         if wrap_mode:
                             if abs(r1 - r2) > 1: 
                                 if r1 < r2:
-                                    pygame.draw.line(screen, color, p1, (p1[0], p1[1] - cell_size), pipe_thickness)
-                                    pygame.draw.line(screen, color, p2, (p2[0], p2[1] + cell_size), pipe_thickness)
+                                    pygame.draw.line(screen, color, p1, (p1[0], p1[1] - cell_size), current_thickness)
+                                    pygame.draw.line(screen, color, p2, (p2[0], p2[1] + cell_size), current_thickness)
                                 else:
-                                    pygame.draw.line(screen, color, p1, (p1[0], p1[1] + cell_size), pipe_thickness)
-                                    pygame.draw.line(screen, color, p2, (p2[0], p2[1] - cell_size), pipe_thickness)
+                                    pygame.draw.line(screen, color, p1, (p1[0], p1[1] + cell_size), current_thickness)
+                                    pygame.draw.line(screen, color, p2, (p2[0], p2[1] - cell_size), current_thickness)
                             elif abs(c1 - c2) > 1: 
                                 if c1 < c2:
-                                    pygame.draw.line(screen, color, p1, (p1[0] - cell_size, p1[1]), pipe_thickness)
-                                    pygame.draw.line(screen, color, p2, (p2[0] + cell_size, p2[1]), pipe_thickness)
+                                    pygame.draw.line(screen, color, p1, (p1[0] - cell_size, p1[1]), current_thickness)
+                                    pygame.draw.line(screen, color, p2, (p2[0] + cell_size, p2[1]), current_thickness)
                                 else:
-                                    pygame.draw.line(screen, color, p1, (p1[0] + cell_size, p1[1]), pipe_thickness)
-                                    pygame.draw.line(screen, color, p2, (p2[0] - cell_size, p2[1]), pipe_thickness)
+                                    pygame.draw.line(screen, color, p1, (p1[0] + cell_size, p1[1]), current_thickness)
+                                    pygame.draw.line(screen, color, p2, (p2[0] - cell_size, p2[1]), current_thickness)
                         continue 
                     else:
-                        pygame.draw.line(screen, color, p1, p2, pipe_thickness)
+                        pygame.draw.line(screen, color, p1, p2, current_thickness)
                     
-                for r, c in path:
+                for i, (r, c) in enumerate(path):
                     p = (off_x + c * cell_size + cell_size // 2, off_y + r * cell_size + cell_size // 2)
-                    pygame.draw.circle(screen, color, p, joint_radius)
+                    
+                    # Ensure the visual joint attached to the active head also follows the slide
+                    if col_id == active_color and i == len(path) - 1:
+                        p = visual_cursor
+                        
+                    pygame.draw.circle(screen, color, p, current_radius)
 
+            # Draw Real Dots
             for r in range(grid_size):
                 for c in range(grid_size):
                     if level_grid[r][c] != 0:
@@ -408,10 +442,14 @@ def main():
                         center = (off_x + c * cell_size + cell_size // 2, off_y + r * cell_size + cell_size // 2)
                         pygame.draw.circle(screen, color, center, int(cell_size * 0.35))
 
-            cr, cc = cursor
-            cursor_rect = (off_x + cc * cell_size, off_y + cr * cell_size, cell_size, cell_size)
+            # --- ANIMATED CURSOR ---
             draw_color = get_color(active_color) if active_color else CURSOR_COLOR
             thickness = max(4, cell_size // 8) if active_color else 3
+            
+            # Draw cursor at the interpolated visual coordinates
+            cursor_rect = pygame.Rect(0, 0, cell_size, cell_size)
+            if visual_cursor:
+                cursor_rect.center = visual_cursor
             pygame.draw.rect(screen, draw_color, cursor_rect, thickness, border_radius=6)
 
             hud_left = hud_font.render(f"Level {current_level_idx + 1} / {len(LEVELS)}", True, (220, 220, 220))
