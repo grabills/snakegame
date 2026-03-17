@@ -57,7 +57,9 @@ class FlowGame:
         self.meltdown_timer = self.grid_size * self.perfect_moves * 0.75 
         return True
 
-    def save_state(self): self.history_stack.append({k: v[:] for k, v in self.paths.items()})
+    def save_state(self): 
+        self.history_stack.append({k: v[:] for k, v in self.paths.items()})
+
     def undo_state(self):
         if self.history_stack: self.paths = self.history_stack.pop()
 
@@ -66,8 +68,6 @@ class FlowGame:
             if len(path) < 2: return False
             if self.grid[path[0][0]][path[0][1]] != col_id or self.grid[path[-1][0]][path[-1][1]] != col_id: return False
             
-        # A bridge requires TWO paths to cross it to be "fully filled". 
-        # By calculating the raw volume of required tiles, we perfectly enforce bridges being entirely used.
         target_volume = sum(1 for r in range(self.grid_size) for c in range(self.grid_size) if self.grid[r][c] != HOLE)
         target_volume += sum(1 for r in range(self.grid_size) for c in range(self.grid_size) if self.grid[r][c] == BRIDGE)
         return sum(len(path) for path in self.paths.values()) == target_volume
@@ -96,9 +96,14 @@ class FlowGame:
                     path = self.paths[self.active_color]
                     if len(path) > 1 and self.grid[r][c] == self.active_color and path[-1] == (r, c):
                         self.completed_pulses[self.active_color] = pygame.time.get_ticks()
-                        for _ in range(15):
-                            a, s = random.uniform(0, 2*math.pi), random.uniform(50, 150)
-                            self.particles.append({'pos': [self.off_x + c*self.cell_size + self.cell_size//2, self.off_y + r*self.cell_size + self.cell_size//2], 'vel': [math.cos(a)*s, math.sin(a)*s], 'color': get_color(self.active_color), 'life': 1.0, 'max_life': 1.0})
+                        for _ in range(18):
+                            a, s = random.uniform(0, 2*math.pi), random.uniform(80, 200)
+                            self.particles.append({
+                                'pos': [self.off_x + c*self.cell_size + self.cell_size//2, self.off_y + r*self.cell_size + self.cell_size//2], 
+                                'vel': [math.cos(a)*s, math.sin(a)*s], 
+                                'color': get_color(self.active_color), 
+                                'life': 1.0, 'max_life': 1.0
+                            })
                         self.active_color = None 
                     else:
                         self.save_state(); self.paths[self.active_color] = []; self.active_color = None
@@ -124,7 +129,8 @@ class FlowGame:
         target_pos, start_pos = None, tuple(self.cursor)
         for rr in range(self.grid_size):
             for cc in range(self.grid_size):
-                if self.grid[rr][cc] == self.active_color and (rr, cc) != self.paths[self.active_color][0]: target_pos = (rr, cc); break
+                if self.grid[rr][cc] == self.active_color and (rr, cc) != self.paths[self.active_color][0]: 
+                    target_pos = (rr, cc); break
             if target_pos: break
             
         if target_pos:
@@ -155,7 +161,11 @@ class FlowGame:
             if self.meltdown_timer <= 0: self.load_level(self.level_idx)
         
         for p in reversed(self.particles):
-            p['life'] -= dt; p['pos'][0] += p['vel'][0] * dt; p['pos'][1] += p['vel'][1] * dt
+            p['life'] -= dt
+            p['pos'][0] += p['vel'][0] * dt
+            p['pos'][1] += p['vel'][1] * dt
+            p['vel'][0] *= 0.9  # Friction
+            p['vel'][1] *= 0.9
             if p['life'] <= 0: self.particles.remove(p)
                 
         if self.hint_timer > 0:
@@ -184,19 +194,15 @@ class FlowGame:
                     move_allowed = True
                     target_val = self.grid[nr][nc]
                     
-                    # 1. Reject Holes
                     if target_val == HOLE: 
                         move_allowed = False
-                        
-                    # 2. Bridge Physics (Overpass Logic)
                     elif self.active_color is not None:
                         path = self.paths[self.active_color]
                         
-                        # Exiting a bridge: You must maintain your momentum straight forward
                         if self.grid[r][c] == BRIDGE and len(path) >= 2:
                             prev_r, prev_c = path[-2]
                             heading_r, heading_c = r - prev_r, c - prev_c
-                            if self.mods["Torus"]: # Normalize heading for wrap
+                            if self.mods["Torus"]: 
                                 if heading_r > 1: heading_r = -1
                                 elif heading_r < -1: heading_r = 1
                                 if heading_c > 1: heading_c = -1
@@ -204,22 +210,19 @@ class FlowGame:
                             if action_dr != heading_r or action_dc != heading_c:
                                 move_allowed = False
                         
-                        # Entering a bridge: Orthogonal check
                         if move_allowed and target_val == BRIDGE and (nr, nc) not in path:
                             occupants = [col for col, p in self.paths.items() if (nr, nc) in p and col != self.active_color]
                             if len(occupants) == 2:
-                                move_allowed = False # Bridge is full
+                                move_allowed = False 
                             elif len(occupants) == 1:
                                 occ_path = self.paths[occupants[0]]
                                 idx = occ_path.index((nr, nc))
-                                if idx == 0 or idx == len(occ_path)-1: move_allowed = False # Invalid state
+                                if idx == 0 or idx == len(occ_path)-1: move_allowed = False 
                                 else:
-                                    # Must cross perpendicularly
                                     p_occ, n_occ = occ_path[idx-1], occ_path[idx+1]
-                                    if p_occ[1] == n_occ[1] and action_dc == 0: move_allowed = False # Both vertical
-                                    if p_occ[0] == n_occ[0] and action_dr == 0: move_allowed = False # Both horizontal
+                                    if p_occ[1] == n_occ[1] and action_dc == 0: move_allowed = False 
+                                    if p_occ[0] == n_occ[0] and action_dr == 0: move_allowed = False 
 
-                        # Standard Endpoints
                         elif (nr, nc) not in path:
                             head = path[-1]
                             if self.grid[head[0]][head[1]] == self.active_color and len(path) > 1: move_allowed = False
@@ -235,7 +238,7 @@ class FlowGame:
                             else:
                                 for col_id, p in self.paths.items():
                                     if col_id != self.active_color and (nr, nc) in p and self.grid[nr][nc] != BRIDGE:
-                                        self.paths[col_id] = [] # Break lines unless it's a bridge
+                                        self.paths[col_id] = [] 
                                 path.append((nr, nc))
                         if is_auto_move and self.grid[nr][nc] > 0: self.halt_auto_move = True
                     else:
@@ -263,30 +266,40 @@ class FlowGame:
         b_off_x, b_off_y = self.off_x + shake_x, self.off_y + shake_y
 
         pygame.draw.rect(screen, (22, 22, 26), (0, 0, self.w, self.ui_h))
-        # Draw Background only for Valid Cells (Creates irregular shapes!)
+        pygame.draw.line(screen, (35, 35, 45), (0, self.ui_h), (self.w, self.ui_h), 2)
+        
+        # --- FLOATING TILE RENDERING ---
         for r in range(self.grid_size):
             for c in range(self.grid_size):
                 if self.grid[r][c] != HOLE:
-                    pygame.draw.rect(screen, BOARD_BG, (b_off_x + c*self.cell_size, b_off_y + r*self.cell_size, self.cell_size, self.cell_size))
-        
-        # Grid Lines
-        for r in range(self.grid_size + 1):
-            for c in range(self.grid_size):
-                if r < self.grid_size and self.grid[r][c] != HOLE:
-                    pygame.draw.line(screen, GRID_COLOR, (b_off_x + c*self.cell_size, b_off_y + r*self.cell_size), (b_off_x + c*self.cell_size, b_off_y + (r+1)*self.cell_size))
-                    pygame.draw.line(screen, GRID_COLOR, (b_off_x + (c+1)*self.cell_size, b_off_y + r*self.cell_size), (b_off_x + (c+1)*self.cell_size, b_off_y + (r+1)*self.cell_size))
-                if c < self.grid_size and r < self.grid_size and self.grid[r][c] != HOLE:
-                    pygame.draw.line(screen, GRID_COLOR, (b_off_x + c*self.cell_size, b_off_y + r*self.cell_size), (b_off_x + (c+1)*self.cell_size, b_off_y + r*self.cell_size))
-                    pygame.draw.line(screen, GRID_COLOR, (b_off_x + c*self.cell_size, b_off_y + (r+1)*self.cell_size), (b_off_x + (c+1)*self.cell_size, b_off_y + (r+1)*self.cell_size))
+                    tile_rect = (b_off_x + c*self.cell_size + 2, b_off_y + r*self.cell_size + 2, self.cell_size - 4, self.cell_size - 4)
+                    pygame.draw.rect(screen, BOARD_BG, tile_rect, border_radius=8)
+                    
+                    # Premium Bridge Design
+                    if self.grid[r][c] == BRIDGE:
+                        cx, cy = b_off_x + c*self.cell_size + self.cell_size//2, b_off_y + r*self.cell_size + self.cell_size//2
+                        chan_w = int(self.cell_size * 0.4)
+                        # Underpass (Dark groove)
+                        pygame.draw.rect(screen, (20, 20, 25), (cx - chan_w//2, cy - self.cell_size//2 + 4, chan_w, self.cell_size - 8), border_radius=2)
+                        # Overpass Rails
+                        pygame.draw.rect(screen, (60, 60, 75), (cx - self.cell_size//2 + 4, cy - chan_w//2 - 4, self.cell_size - 8, 8), border_radius=2)
+                        pygame.draw.rect(screen, (60, 60, 75), (cx - self.cell_size//2 + 4, cy + chan_w//2 - 4, self.cell_size - 8, 8), border_radius=2)
 
-        # Bridge Overpasses Graphics
-        for r in range(self.grid_size):
-            for c in range(self.grid_size):
-                if self.grid[r][c] == BRIDGE:
-                    cx, cy = b_off_x + c*self.cell_size + self.cell_size//2, b_off_y + r*self.cell_size + self.cell_size//2
-                    rad = int(self.cell_size * 0.35)
-                    pygame.draw.rect(screen, (50, 50, 60), (cx - rad, cy - rad, rad*2, rad*2), border_radius=4)
-                    pygame.draw.rect(screen, BORDER_COLOR, (cx - rad, cy - rad, rad*2, rad*2), 2, border_radius=4)
+        if self.hint_timer > 0 and len(self.hint_path) > 1:
+            hint_surf = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
+            c_thick = max(2, int(self.cell_size * 0.15))
+            h_color = get_color(self.active_color) if self.active_color else (255,255,255)
+            alpha_color = (*h_color, 120) 
+            
+            for i in range(len(self.hint_path) - 1):
+                r1, c1 = self.hint_path[i]
+                r2, c2 = self.hint_path[i+1]
+                p1 = (b_off_x + c1 * self.cell_size + self.cell_size // 2, b_off_y + r1 * self.cell_size + self.cell_size // 2)
+                p2 = (b_off_x + c2 * self.cell_size + self.cell_size // 2, b_off_y + r2 * self.cell_size + self.cell_size // 2)
+                
+                if abs(r1 - r2) <= 1 and abs(c1 - c2) <= 1:
+                    pygame.draw.line(hint_surf, alpha_color, p1, p2, c_thick)
+            screen.blit(hint_surf, (0, 0))
 
         pipe_thick, joint_rad = int(self.cell_size * 0.4), int(self.cell_size * 0.2)
         
@@ -327,18 +340,21 @@ class FlowGame:
         for r in range(self.grid_size):
             for c in range(self.grid_size):
                 if self.grid[r][c] > 0:
-                    pygame.draw.circle(screen, get_color(self.grid[r][c]), (b_off_x + c*self.cell_size + self.cell_size//2, b_off_y + r*self.cell_size + self.cell_size//2), int(self.cell_size * 0.35))
+                    dot_color = get_color(self.grid[r][c])
+                    cx, cy = b_off_x + c*self.cell_size + self.cell_size//2, b_off_y + r*self.cell_size + self.cell_size//2
+                    pygame.draw.circle(screen, dot_color, (cx, cy), int(self.cell_size * 0.35))
+                    pygame.draw.circle(screen, (255, 255, 255), (cx - int(self.cell_size * 0.1), cy - int(self.cell_size * 0.1)), int(self.cell_size * 0.08)) # Specular Highlight
 
         for p in self.particles:
-            rect = pygame.Rect(0, 0, max(1, int(12 * (p['life'] / p['max_life']))), max(1, int(12 * (p['life'] / p['max_life']))))
+            rect = pygame.Rect(0, 0, max(1, int(10 * (p['life'] / p['max_life']))), max(1, int(10 * (p['life'] / p['max_life']))))
             rect.center = (p['pos'][0] + shake_x, p['pos'][1] + shake_y)
-            pygame.draw.rect(screen, p['color'], rect)
+            pygame.draw.rect(screen, p['color'], rect, border_radius=2)
 
         if self.visual_cursor and self.grid[self.cursor[0]][self.cursor[1]] != HOLE:
             draw_col = get_color(self.active_color) if self.active_color else CURSOR_COLOR
             c_rect = pygame.Rect(0, 0, self.cell_size, self.cell_size)
             c_rect.center = (self.visual_cursor.x + shake_x, self.visual_cursor.y + shake_y)
-            pygame.draw.rect(screen, draw_col, c_rect, max(4, self.cell_size // 8) if self.active_color else 3, border_radius=8)
+            pygame.draw.rect(screen, draw_col, c_rect, max(4, self.cell_size // 8) if self.active_color else 3, border_radius=10)
 
         if self.mods["Fog"]:
             fog_surf = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
@@ -349,14 +365,15 @@ class FlowGame:
                     for r, c in path: pygame.draw.circle(fog_surf, (0, 0, 0, 150), (b_off_x + c*self.cell_size + self.cell_size//2, b_off_y + r*self.cell_size + self.cell_size//2), self.cell_size // 2)
             screen.blit(fog_surf, (0, 0))
 
-        hud_left = self.fonts['hud'].render(f"{self.levels[self.level_idx].get('difficulty', 'Unknown')} {self.level_idx + 1} | Moves: {self.moves}/{self.perfect_moves}", True, (220, 220, 220))
+        diff = self.levels[self.level_idx].get("difficulty", "Unknown")
+        hud_left = self.fonts['hud'].render(f"{diff} {self.level_idx + 1}  |  Moves: {self.moves}/{self.perfect_moves}", True, (220, 220, 220))
         screen.blit(hud_left, (30, (self.ui_h - hud_left.get_height()) // 2))
         
         if self.mods["Meltdown"]:
-            time_surf = self.fonts['hud'].render(f" | TIME: {max(0.0, self.meltdown_timer):.1f}s", True, (255, 50, 50) if self.meltdown_timer < 5.0 else (220, 220, 220))
+            time_surf = self.fonts['hud'].render(f"  |  TIME: {max(0.0, self.meltdown_timer):.1f}s", True, (255, 50, 50) if self.meltdown_timer < 5.0 else (220, 220, 220))
             screen.blit(time_surf, (30 + hud_left.get_width(), (self.ui_h - time_surf.get_height()) // 2))
 
-        hud_right = self.fonts['hud'].render(f"[ESC] Menu  [R] Restart  [Z] Undo  [H] Hint", True, (150, 150, 150))
+        hud_right = self.fonts['hud'].render(f"[ESC] Menu    [R] Restart    [Z] Undo    [H] Hint", True, (150, 150, 150))
         screen.blit(hud_right, (self.w - hud_right.get_width() - 30, (self.ui_h - hud_right.get_height()) // 2))
 
         if self.solved:
@@ -391,7 +408,7 @@ def main():
     game.load_database()
     
     state, clock, diff_page = "MENU", pygame.time.Clock(), 0
-    diff_order = ["Easy", "Normal", "Hard", "Very Hard", "Impossible", "Bridges"]
+    diff_order = ["Easy", "Normal", "Hard", "Very Hard", "Impossible", "Irregular", "Bridges"]
     
     cat_levels = {diff: [] for diff in diff_order}
     for idx, lvl in enumerate(game.levels):
@@ -447,7 +464,7 @@ def main():
             active_diff = diff_order[diff_page]
             lvls = cat_levels[active_diff]
             
-            title = fonts['title'].render(active_diff.upper(), True, DISTINCT_COLORS[diff_page])
+            title = fonts['title'].render(active_diff.upper(), True, DISTINCT_COLORS[diff_page % len(DISTINCT_COLORS)])
             screen.blit(title, (w//2 - title.get_width()//2, h * 0.05))
             screen.blit(fonts['hud'].render("[ESC] Back to Menu", True, (150, 150, 150)), (30, 30))
             
