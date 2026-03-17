@@ -25,11 +25,12 @@ class FlowGame:
         self.action_dr, self.action_dc = 0, 0 
         self.move_dr, self.move_dc, self.move_timer, self.current_delay, self.halt_auto_move = 0, 0, 0, 150, False
         
-        self.mods = {"Torus": False, "Fog": False, "Meltdown": False}
+        self.mods = {"Fog": False, "Meltdown": False}
         self.meltdown_timer = 0.0
         self.level_idx = 0
         self.levels = []
         self.solved_levels = set()
+        self.is_torus = False
 
     def load_database(self, file_path="puzzles.json"):
         if os.path.exists(file_path):
@@ -42,6 +43,7 @@ class FlowGame:
         self.level_idx = idx
         self.grid_size = len(self.levels[idx]["grid"])
         self.grid = [row[:] for row in self.levels[idx]["grid"]]
+        self.is_torus = (self.levels[idx].get("difficulty") == "Torus")
         
         max_board = min(self.w, self.h - self.ui_h) - int(self.h * 0.20)
         self.cell_size = max_board // self.grid_size
@@ -137,7 +139,8 @@ class FlowGame:
             q, visited, blocked = deque([(start_pos, [start_pos])]), set([start_pos]), set()
             for rr in range(self.grid_size):
                 for cc in range(self.grid_size):
-                    if self.grid[rr][cc] > 0 and (rr, cc) != target_pos and (rr, cc) != self.paths[self.active_color][0]: blocked.add((rr, cc))
+                    if (self.grid[rr][cc] > 0 and (rr, cc) != target_pos and (rr, cc) != self.paths[self.active_color][0]) or self.grid[rr][cc] == HOLE: 
+                        blocked.add((rr, cc))
             for p in self.paths.values():
                 for cell in p: blocked.add(cell)
             blocked.discard(start_pos) 
@@ -147,8 +150,8 @@ class FlowGame:
                 if curr == target_pos: self.hint_path, self.hint_timer = pth, 2.0; break
                 for dr, dc in [(-1,0), (1,0), (0,-1), (0,1)]:
                     nr, nc = curr[0] + dr, curr[1] + dc
-                    if self.mods["Torus"]: nr, nc = nr % self.grid_size, nc % self.grid_size
-                    if 0 <= nr < self.grid_size and 0 <= nc < self.grid_size and self.grid[nr][nc] != HOLE:
+                    if self.is_torus: nr, nc = nr % self.grid_size, nc % self.grid_size
+                    if 0 <= nr < self.grid_size and 0 <= nc < self.grid_size:
                         if (nr, nc) not in visited and (nr, nc) not in blocked:
                             visited.add((nr, nc)); q.append(((nr, nc), pth + [(nr, nc)]))
 
@@ -164,7 +167,7 @@ class FlowGame:
             p['life'] -= dt
             p['pos'][0] += p['vel'][0] * dt
             p['pos'][1] += p['vel'][1] * dt
-            p['vel'][0] *= 0.9  # Friction
+            p['vel'][0] *= 0.9  
             p['vel'][1] *= 0.9
             if p['life'] <= 0: self.particles.remove(p)
                 
@@ -185,10 +188,10 @@ class FlowGame:
             r, c = self.cursor
             nr, nc = r + action_dr, c + action_dc
             
-            if self.mods["Torus"]: nr, nc = nr % self.grid_size, nc % self.grid_size
+            if self.is_torus: nr, nc = nr % self.grid_size, nc % self.grid_size
 
             if 0 <= nr < self.grid_size and 0 <= nc < self.grid_size:
-                dist = min(abs(r - nr), self.grid_size - abs(r - nr)) + min(abs(c - nc), self.grid_size - abs(c - nc)) if self.mods["Torus"] else abs(r - nr) + abs(c - nc)
+                dist = min(abs(r - nr), self.grid_size - abs(r - nr)) + min(abs(c - nc), self.grid_size - abs(c - nc)) if self.is_torus else abs(r - nr) + abs(c - nc)
                     
                 if dist == 1:
                     move_allowed = True
@@ -202,7 +205,7 @@ class FlowGame:
                         if self.grid[r][c] == BRIDGE and len(path) >= 2:
                             prev_r, prev_c = path[-2]
                             heading_r, heading_c = r - prev_r, c - prev_c
-                            if self.mods["Torus"]: 
+                            if self.is_torus: 
                                 if heading_r > 1: heading_r = -1
                                 elif heading_r < -1: heading_r = 1
                                 if heading_c > 1: heading_c = -1
@@ -268,20 +271,16 @@ class FlowGame:
         pygame.draw.rect(screen, (22, 22, 26), (0, 0, self.w, self.ui_h))
         pygame.draw.line(screen, (35, 35, 45), (0, self.ui_h), (self.w, self.ui_h), 2)
         
-        # --- FLOATING TILE RENDERING ---
         for r in range(self.grid_size):
             for c in range(self.grid_size):
                 if self.grid[r][c] != HOLE:
                     tile_rect = (b_off_x + c*self.cell_size + 2, b_off_y + r*self.cell_size + 2, self.cell_size - 4, self.cell_size - 4)
                     pygame.draw.rect(screen, BOARD_BG, tile_rect, border_radius=8)
                     
-                    # Premium Bridge Design
                     if self.grid[r][c] == BRIDGE:
                         cx, cy = b_off_x + c*self.cell_size + self.cell_size//2, b_off_y + r*self.cell_size + self.cell_size//2
                         chan_w = int(self.cell_size * 0.4)
-                        # Underpass (Dark groove)
                         pygame.draw.rect(screen, (20, 20, 25), (cx - chan_w//2, cy - self.cell_size//2 + 4, chan_w, self.cell_size - 8), border_radius=2)
-                        # Overpass Rails
                         pygame.draw.rect(screen, (60, 60, 75), (cx - self.cell_size//2 + 4, cy - chan_w//2 - 4, self.cell_size - 8, 8), border_radius=2)
                         pygame.draw.rect(screen, (60, 60, 75), (cx - self.cell_size//2 + 4, cy + chan_w//2 - 4, self.cell_size - 8, 8), border_radius=2)
 
@@ -297,7 +296,15 @@ class FlowGame:
                 p1 = (b_off_x + c1 * self.cell_size + self.cell_size // 2, b_off_y + r1 * self.cell_size + self.cell_size // 2)
                 p2 = (b_off_x + c2 * self.cell_size + self.cell_size // 2, b_off_y + r2 * self.cell_size + self.cell_size // 2)
                 
-                if abs(r1 - r2) <= 1 and abs(c1 - c2) <= 1:
+                if abs(r1 - r2) > 1 or abs(c1 - c2) > 1:
+                    if self.is_torus:
+                        if abs(r1 - r2) > 1: 
+                            pygame.draw.line(hint_surf, alpha_color, p1, (p1[0], p1[1] - self.cell_size if r1 < r2 else p1[1] + self.cell_size), c_thick)
+                            pygame.draw.line(hint_surf, alpha_color, p2, (p2[0], p2[1] + self.cell_size if r1 < r2 else p2[1] - self.cell_size), c_thick)
+                        elif abs(c1 - c2) > 1: 
+                            pygame.draw.line(hint_surf, alpha_color, p1, (p1[0] - self.cell_size if c1 < c2 else p1[0] + self.cell_size, p1[1]), c_thick)
+                            pygame.draw.line(hint_surf, alpha_color, p2, (p2[0] + self.cell_size if c1 < c2 else p2[0] - self.cell_size, p2[1]), c_thick)
+                else:
                     pygame.draw.line(hint_surf, alpha_color, p1, p2, c_thick)
             screen.blit(hint_surf, (0, 0))
 
@@ -325,7 +332,7 @@ class FlowGame:
                 p2 = (b_off_x + c2 * self.cell_size + self.cell_size // 2, b_off_y + r2 * self.cell_size + self.cell_size // 2)
                 
                 if abs(r1 - r2) > 1 or abs(c1 - c2) > 1:
-                    if self.mods["Torus"]:
+                    if self.is_torus:
                         if abs(r1 - r2) > 1: 
                             pygame.draw.line(screen, color, p1, (p1[0], p1[1] - self.cell_size if r1 < r2 else p1[1] + self.cell_size), c_thick)
                             pygame.draw.line(screen, color, p2, (p2[0], p2[1] + self.cell_size if r1 < r2 else p2[1] - self.cell_size), c_thick)
@@ -343,7 +350,7 @@ class FlowGame:
                     dot_color = get_color(self.grid[r][c])
                     cx, cy = b_off_x + c*self.cell_size + self.cell_size//2, b_off_y + r*self.cell_size + self.cell_size//2
                     pygame.draw.circle(screen, dot_color, (cx, cy), int(self.cell_size * 0.35))
-                    pygame.draw.circle(screen, (255, 255, 255), (cx - int(self.cell_size * 0.1), cy - int(self.cell_size * 0.1)), int(self.cell_size * 0.08)) # Specular Highlight
+                    pygame.draw.circle(screen, (255, 255, 255), (cx - int(self.cell_size * 0.1), cy - int(self.cell_size * 0.1)), int(self.cell_size * 0.08)) 
 
         for p in self.particles:
             rect = pygame.Rect(0, 0, max(1, int(10 * (p['life'] / p['max_life']))), max(1, int(10 * (p['life'] / p['max_life']))))
@@ -356,13 +363,47 @@ class FlowGame:
             c_rect.center = (self.visual_cursor.x + shake_x, self.visual_cursor.y + shake_y)
             pygame.draw.rect(screen, draw_col, c_rect, max(4, self.cell_size // 8) if self.active_color else 3, border_radius=10)
 
+        # --- PERFECT CONTINUOUS LINE FOG MASK ---
         if self.mods["Fog"]:
             fog_surf = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
             fog_surf.fill((0, 0, 0, 250)) 
-            if self.visual_cursor: pygame.draw.circle(fog_surf, (0, 0, 0, 0), (int(self.visual_cursor.x + shake_x), int(self.visual_cursor.y + shake_y)), int(self.cell_size * 1.5 + math.sin(current_time / 200.0) * (self.cell_size * 0.1)))
+            
+            # Cursor Torch Glow
+            if self.visual_cursor:
+                cx, cy = int(self.visual_cursor.x + shake_x), int(self.visual_cursor.y + shake_y)
+                vis_radius = int(self.cell_size * 1.5 + math.sin(current_time / 200.0) * (self.cell_size * 0.1))
+                hole = pygame.Surface((vis_radius*2, vis_radius*2), pygame.SRCALPHA)
+                for i in range(vis_radius, 0, -3):
+                    pygame.draw.circle(hole, (255, 255, 255, int(250 * (i / vis_radius))), (vis_radius, vis_radius), i)
+                fog_surf.blit(hole, (cx - vis_radius, cy - vis_radius), special_flags=pygame.BLEND_RGBA_SUB)
+            
+            # Continuous Path Glow
+            path_mask = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
+            mask_thick = int(self.cell_size * 0.5)
+            mask_rad = mask_thick // 2
+            
             for col_id, path in self.paths.items():
                 if len(path) > 1 and self.grid[path[-1][0]][path[-1][1]] == col_id:
-                    for r, c in path: pygame.draw.circle(fog_surf, (0, 0, 0, 150), (b_off_x + c*self.cell_size + self.cell_size//2, b_off_y + r*self.cell_size + self.cell_size//2), self.cell_size // 2)
+                    for i in range(len(path) - 1):
+                        r1, c1, r2, c2 = path[i][0], path[i][1], path[i+1][0], path[i+1][1]
+                        p1 = (b_off_x + c1 * self.cell_size + self.cell_size // 2, b_off_y + r1 * self.cell_size + self.cell_size // 2)
+                        p2 = (b_off_x + c2 * self.cell_size + self.cell_size // 2, b_off_y + r2 * self.cell_size + self.cell_size // 2)
+                        
+                        if abs(r1 - r2) > 1 or abs(c1 - c2) > 1:
+                            if self.is_torus:
+                                if abs(r1 - r2) > 1: 
+                                    pygame.draw.line(path_mask, (255,255,255,120), p1, (p1[0], p1[1] - self.cell_size if r1 < r2 else p1[1] + self.cell_size), mask_thick)
+                                    pygame.draw.line(path_mask, (255,255,255,120), p2, (p2[0], p2[1] + self.cell_size if r1 < r2 else p2[1] - self.cell_size), mask_thick)
+                                elif abs(c1 - c2) > 1: 
+                                    pygame.draw.line(path_mask, (255,255,255,120), p1, (p1[0] - self.cell_size if c1 < c2 else p1[0] + self.cell_size, p1[1]), mask_thick)
+                                    pygame.draw.line(path_mask, (255,255,255,120), p2, (p2[0] + self.cell_size if c1 < c2 else p2[0] - self.cell_size, p2[1]), mask_thick)
+                        else: 
+                            pygame.draw.line(path_mask, (255,255,255,120), p1, p2, mask_thick)
+                            
+                    for r, c in path: 
+                        pygame.draw.circle(path_mask, (255,255,255,120), (b_off_x + c*self.cell_size + self.cell_size//2, b_off_y + r*self.cell_size + self.cell_size//2), mask_rad)
+            
+            fog_surf.blit(path_mask, (0, 0), special_flags=pygame.BLEND_RGBA_SUB)
             screen.blit(fog_surf, (0, 0))
 
         diff = self.levels[self.level_idx].get("difficulty", "Unknown")
@@ -408,7 +449,7 @@ def main():
     game.load_database()
     
     state, clock, diff_page = "MENU", pygame.time.Clock(), 0
-    diff_order = ["Easy", "Normal", "Hard", "Very Hard", "Impossible", "Irregular", "Bridges"]
+    diff_order = ["Easy", "Normal", "Hard", "Very Hard", "Impossible", "Irregular", "Bridges", "Torus"]
     
     cat_levels = {diff: [] for diff in diff_order}
     for idx, lvl in enumerate(game.levels):
@@ -448,8 +489,8 @@ def main():
             if buttons['select'].draw(screen, fonts['main'], mouse_pos, dt) and click: state = "LEVEL_SELECT"
             
             mod_y, mod_w, mod_gap = h * 0.65, int(w * 0.18), int(w * 0.02)
-            mx = w // 2 - ((mod_w * 3) + (mod_gap * 2)) // 2
-            for i, mod in enumerate(["Torus", "Fog", "Meltdown"]):
+            mx = w // 2 - ((mod_w * 2) + mod_gap) // 2
+            for i, mod in enumerate(["Fog", "Meltdown"]):
                 bid = f"mod_{mod}"
                 if bid not in buttons: buttons[bid] = Button(mod, mx + i*(mod_w+mod_gap), mod_y, mod_w, bh, BTN_DEFAULT, BTN_HOVER)
                 buttons[bid].default_col = BTN_MOD_ACTIVE if game.mods[mod] else BTN_DEFAULT
